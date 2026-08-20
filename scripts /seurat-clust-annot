@@ -1,0 +1,96 @@
+
+# Manual marker annotations
+
+setwd("D:\\manu_bioinformatics\\Python_linux_module\\Project\\Plots")
+dir.create("manual_marker_annotations_plots", showWarnings = FALSE)
+
+
+markers <- FindAllMarkers(seur_obj1_qcmetric)
+head(markers)
+
+FeaturePlot(seur_obj1_qcmetric, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP",
+                                             "CD8A"))
+
+
+View(markers)
+
+library(dplyr)
+
+markers %>%
+  group_by(cluster) %>%
+  dplyr::filter(avg_log2FC > 4)%>%View()
+
+
+
+
+canonical_markers <- list(
+  "T_cells" = c("CD3D", "CD3E", "CD3G"),
+  "CD4_T" = c("CD3D", "CD4", "IL7R"),
+  "CD8_T" = c("CD3D", "CD8A", "CD8B"),
+  "B_cells" = c("CD79A", "MS4A1", "CD19"),
+  "NK_cells" = c("NKG7", "GNLY", "NCAM1"),
+  "Monocytes" = c("CD14", "LYZ", "S100A8", "S100A9"),
+  "Classical_Mono" = c("CD14", "S100A8", "FCGR3A"),
+  "Non_Classical_Mono" = c("FCGR3A", "MS4A7"),
+  "Dendritic_cells" = c("FCER1A", "CST3"),
+  "Plasmacytoid_DC" = c("IL3RA", "GZMB", "SERPINF1")
+)
+
+
+markers <- FindAllMarkers(
+  seur_obj1_qcmetric,
+  only.pos = TRUE,
+  min.pct = 0.7,
+  logfc.threshold = 0.25,
+  min.diff.pct = 0.25
+)
+
+View(markers)
+
+markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 10) %>% View()
+
+DotPlot(
+  seur_obj1_qcmetric,
+  features = c("CCR7","LEF1","TCF7","IL7R","BCL11B","CD8B","S100A8","S100A12",
+               "CSF1R","MS4A7","FGFBP2","GZMH","NKG7","GNLY","MS4A1","CD22","PAX5")
+) + RotatedAxis()
+
+
+FindMarkers(seur_obj1_qcmetric, ident.1 = 0)
+
+
+
+FeaturePlot(seur_obj1_qcmetric, features = c( "TCF7", "CCR7", "IL7R"))
+
+
+
+
+
+
+
+
+
+
+#Visualizing canonical marker genes
+
+
+
+
+
+all_genes <- rownames(seur_obj1_qcmetric)
+
+for (cell_type in names(canonical_markers)) {
+  markers <- canonical_markers[[cell_type]]
+  present <- markers %in% all_genes
+  
+  cat(sprintf("%-20s: %d/%d markers present\n", 
+              cell_type, sum(present), length(markers)))
+  
+  if (!all(present)) {
+    missing <- markers[!present]
+    cat(sprintf("  Missing: %s\n", paste(missing, collapse = ", ")))
+  }
+}
+
