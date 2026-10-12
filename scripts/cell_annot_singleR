@@ -1,0 +1,28 @@
+##Marker annotation using Single R
+
+library(SingleR)
+library(celldex)
+
+#Get Reference data
+ref <- celldex::HumanPrimaryCellAtlasData()
+ref
+View(as.data.frame(colData(ref)))
+
+#Get query data(your seur_obj1_filtered normalized count data)
+pbmc_count <- GetAssayData(seur_obj1_filtered, layer = "counts")
+
+# Prediction
+pred <- SingleR(test = pbmc_count, ref = ref , labels = ref$label.main)
+seur_obj1_filtered$singleR.labels <- pred$labels[match(rownames(seur_obj1_filtered@meta.data), rownames(pred))]
+DimPlot(seur_obj1_filtered, reduction = "umap", group.by = "singleR.labels")
+
+##Annotation diagnostic
+#Based on the scores within cells
+plotScoreHeatmap(pred)
+pred$scores
+
+
+#Based on deltas across cells
+plotDeltaDistribution(pred)
+
+
