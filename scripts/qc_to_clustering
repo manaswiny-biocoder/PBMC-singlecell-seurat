@@ -1,1 +1,213 @@
+#SINGLE-CELL RNA-SEQ
+# 10X genomics
+# PBMC
 
+# Installing packages
+library(Seurat)
+library(SeuratObject)
+library(SingleCellExperiment)
+library(DropletUtils)
+library(ggplot2)
+library(tidyverse)
+library(patchwork)
+
+#  set working directory
+setwd("D:\\manu_bioinformatics\\R_programming\\Rna_seq_seur_obj")
+
+#Create Output directories
+dir.create("Before_QC_plots")
+dir.create("After_QC_plots")
+dir.create("Results_Plots")
+dir.create("Result_File")
+
+# Load the raw data
+counts = Read10X(data.dir = "Data\\500_PBMC_3p_LT_Chromium_X_raw_feature_bc_matrix\\raw_feature_bc_matrix")
+
+
+
+
+# Initialize the Seurat object with the raw data.
+seur_obj1 <- CreateSeuratObject(
+  counts = counts,
+  project = "PBMC")
+
+
+
+# Initial data exploration.
+cat("Total Droplets =", ncol(seur_obj1))
+cat("Total genes =", nrow(seur_obj1))
+
+
+
+# Generating additional  Quality metrics and adding it to meta.data column 
+
+seur_obj1$percent.mito <- PercentageFeatureSet(seur_obj1, pattern = "^MT-")# mitocondrial percentage per cell
+seur_obj1$mito.ratio <- seur_obj1$percent.mito / 100
+seur_obj1$percent.mito[is.na(seur_obj1$percent.mito)] <- 0
+seur_obj1$log10GenesPerUMI <- log10(seur_obj1$nFeature_RNA) / log10(seur_obj1$nCount_RNA)#no of genes detected per UMI
+seur_obj1@meta.data$log10GenesPerUMI[is.na(seur_obj1@meta.data$log10GenesPerUMI)] <- 0
+
+
+
+# Empty droplet detection as it is a droplet based scRNAseq
+#First convert seurat to sce
+sce <- as.SingleCellExperiment(seur_obj1) 
+cat(ncol(sce) ,"intial droplet count")
+cat(nrow(sce) , "intial feature count")
+set.seed(100)
+empty_drops <- emptyDrops(m= counts(sce), lower = 100, niters= 10000, test.ambient = TRUE)
+empty_drops
+hist(empty_drops$FDR, breaks = 100)
+sum(empty_drops$FDR < 0.01, na.rm = TRUE) # no of cells called by empty drops as probable true cells.
+True_cell <- empty_drops$FDR<0.01 # Identify True Cell
+True_cell[is.na(True_cell)] <- FALSE
+empty_df <- data.frame(
+  total_umi = colSums(counts(sce)),
+  is_cell = True_cell) # total_umi is same as nCount_RNA
+
+Validated_barcodes <- colnames(sce)[True_cell]
+raw_data <- LayerData(seur_obj1, layer = "counts") # save the raw count
+seur_obj1 <- subset(seur_obj1, cells = Validated_barcodes)
+cat("After Empty Droplets, cells retained =", ncol(seur_obj1))
+
+
+
+#Ambient Rna correction with soupx
+#Load SoupX package
+library(SoupX)
+tod <- raw_data
+toc <- LayerData(seur_obj1, layer = "counts")
+sc <- SoupChannel(tod = tod, toc = toc, calcSoupProfile = TRUE)
+sc$soupProfile
+sc
+# Quick  clustering for contamination estimation
+temp_obj <- seur_obj1
+temp_obj <- NormalizeData(temp_obj, verbose = FALSE)
+temp_obj <- FindVariableFeatures(temp_obj, nfeatures = 2000, verbose = FALSE)
+temp_obj <- ScaleData(temp_obj, verbose = FALSE)
+temp_obj <- RunPCA(temp_obj, npcs = 30, verbose = FALSE)
+temp_obj <- FindNeighbors(temp_obj, dims = 1:30, verbose = FALSE)
+temp_obj <- RunUMAP(temp_obj, dims = 1:10)
+temp_obj <- FindClusters(temp_obj, resolution = 0.8, verbose = FALSE)
+DimPlot(temp_obj, reduction ="umap")
+
+sc <- setClusters(sc, setNames(as.character(temp_obj$seurat_clusters), colnames(temp_obj)))
+sc = autoEstCont(sc) # Estimate contamination
+contamination_fraction <- sc$fit$rhoEst
+cat("contamination_fraction is = ", contamination_fraction)
+cat(" contamination is less then<5% ,skips soupx correction")
+
+
+  
+# Assessing the Quality matrics for cell level filtering
+
+#UMI counts per cell
+UMI_dist <- ggplot(seur_obj1@meta.data , aes(x = log10(nCount_RNA + 1))) +
+  geom_density(alpha = 0.8 , color = "#8C4BE2" ,fill = "#8C4BE2") +
+  theme_classic() +
+  ylab("cell density") +
+  geom_vline( xintercept = 2.6, linetype = "dashed" )                     
+
+
+# genes detected per cell
+genes_percell <- ggplot(seur_obj1@meta.data , aes(x = log10(nFeature_RNA +1))) +
+  geom_density(alpha = 0.8 , color = "#8C4" , fill = "#8C4") +
+  theme_classic() +
+  geom_vline( xintercept = 2.4 , linetype = "dashed") # log10(300) = 2.4
+
+
+# Visualize the overall complexity of the gene expression by visualizing the genes detected per UMI (novelty score)
+
+novelity_score <-   ggplot(seur_obj1_filtered@meta.data ,aes(x=log10GenesPerUMI)) +
+  geom_density(alpha = 0.2, color = "#27C5F5" , fill = "#27C5F5") +
+  theme_classic() +
+  geom_vline(xintercept = 0.8)                       
+
+
+
+# Visualize mitochondrial ratio 
+
+
+mito.ratio <- ggplot(seur_obj1_filtered@meta.data ,aes( x=mito.ratio)) + 
+  geom_density(alpha = 0.2, color = "#27c" , fill = "#27c") + 
+  scale_x_log10() + 
+  theme_classic() +
+  geom_vline(xintercept = 0.2)
+
+
+Density_plot_QC_metrics <- UMI_dist + genes_percell + novelity_score + mito.ratio
+
+
+# Visualize the correlation between genes detected and number of UMIs and determine whether strong presence of cells with low numbers of genes/UMIs
+seur_obj1_filtered@meta.data %>% 
+  ggplot(aes(x=nCount_RNA, y=nFeature_RNA, color=mito.ratio)) + 
+  geom_point() + 
+  scale_colour_gradient(low = "gray90", high = "black") +
+  stat_smooth(method=lm) +
+  scale_x_log10() + 
+  scale_y_log10() + 
+  theme_classic() +
+  geom_vline(xintercept = 500) +
+  geom_hline(yintercept = 250)
+  
+
+FC1 <- FeatureScatter(seur_obj1, "nCount_RNA", "mito.ratio")#Featurescatter using seurat package
+FC2 <- FeatureScatter(seur_obj1, "nCount_RNA", "nFeature_RNA")
+FC1 + FC2 
+
+Vln_plot <- VlnPlot(
+  seur_obj1_filtered,
+  features = c("nCount_RNA", "nFeature_RNA", "percent.mito"),
+  ncol = 4,
+  pt.size = 0.1
+) &
+  theme(plot.title = element_text(face = "bold"))
+
+
+
+#Violin plot of temp_obj(unsupervised clustering done during contamination estimation)
+
+temp_obj@meta.data$mito.ratio <- seur_obj1@meta.data$mito.ratio
+VlnPlot(temp_obj, c("nCount_RNA", "nFeature_RNA", "mito.ratio"), pt.size = 0)
+
+
+## Cell level quality filtering
+
+seur_obj1_filtered <- subset(seur_obj1, subset = nFeature_RNA > 300 &
+                               nCount_RNA > 500 & 
+                               mito.ratio < 0.2)
+
+
+## we will do the qc again and save those plot, i am not writing the code again, just have to rerun qc metrics with the filtered object.
+
+
+## NORMALIZE DATA and Find Variable Features
+#Log-normalize
+seur_obj1_filtered <- NormalizeData(seur_obj1_filtered, normalization.method = "LogNormalize", 
+                                    scale.factor = 10000, verbose = FALSE)
+
+
+
+# Find highly variable genes
+seur_obj1_filtered<- FindVariableFeatures(seur_obj1_filtered, selection.method = "vst", 
+                                          nfeatures = 2000, verbose = FALSE)
+top10 <- head(VariableFeatures(seur_obj1_filtered), 10)
+cat("Top 20 variable genes:", paste(top20, collapse = ", "), "\n")
+# Visualize variable features
+Variable_feature_plot <- VariableFeaturePlot(seur_obj1_filtered)
+LabelPoints(plot = Variable_feature_plot, points = top10, repel = TRUE)
+
+
+
+# Scale the data
+seur_obj1_filtered <- ScaleData(seur_obj1_filtered)
+seur_obj1_filtered <- RunPCA(seur_obj1_filtered, features = VariableFeatures(seur_obj1_filtered))
+ElbowPlot(seur_obj1_filtered)
+DimHeatmap(seur_obj1_filtered, dims = 1:5, cells = 500, balanced = TRUE)
+
+
+#Clustering 
+seur_obj1_filtered<- FindNeighbors(seur_obj1_filtered, dims = 1:10)
+seur_obj1_filtered <- FindClusters(seur_obj1_filtered, resolution = 1.0)
+seur_obj1_filtered <- RunUMAP(seur_obj1_filtered, dims = 1:10)
+DimPlot(seur_obj1_filtered, reduction = "umap", label = TRUE)
