@@ -12,7 +12,6 @@ Detect true cells vs empty droplets with EmptyDrops (DropletUtils).
 
 Estimate ambient RNA contamination with SoupX and decide whether correction is needed.
 
-Detect and remove doublets with scDblFinder.
 
 Apply cell‑level QC filters (UMI, genes, %MT, %ribo).
 
